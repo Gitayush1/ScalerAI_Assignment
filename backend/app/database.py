@@ -12,13 +12,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./meetly.db")
+# Fall back to a local SQLite file if DATABASE_URL is not set or is empty.
+# On Render with a persistent disk, set DATABASE_URL=sqlite:////data/meetly.db
+# (4 slashes = sqlite:/// prefix + /data/meetly.db absolute path on Linux).
+_raw_url = os.getenv("DATABASE_URL", "").strip()
+DATABASE_URL = _raw_url if _raw_url else "sqlite:///./meetly.db"
 
-# connect_args is required for SQLite to allow multi-threaded access
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
+# connect_args is SQLite-specific — allows multi-threaded FastAPI access.
+# If you later switch to PostgreSQL, remove connect_args entirely.
+_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
+engine = create_engine(DATABASE_URL, connect_args=_connect_args)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
