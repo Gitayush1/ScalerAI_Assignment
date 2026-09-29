@@ -3,11 +3,13 @@ Meetly — FastAPI application entry point.
 
 Startup sequence:
   1. Create all DB tables (if they don't exist yet).
-  2. Mount routers.
-  3. Configure CORS so the Next.js dev server can reach the API.
+  2. Run seed if the database is empty (safe for ephemeral filesystems like Render free tier).
+  3. Mount routers.
+  4. Configure CORS.
 """
 
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -15,34 +17,50 @@ from dotenv import load_dotenv
 from app.database import engine, Base
 from app.routers import meetings_router, participants_router
 
-# Import models so SQLAlchemy knows about them before create_all
-import app.models  # noqa: F401
+import app.models  # noqa: F401 — registers ORM classes with Base
 
 load_dotenv()
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Create tables
+    Base.metadata.create_all(bind=engine)
+
+    # Auto-seed if empty — works on ephemeral filesystems (Render free tier)
+    try:
+        from app.seed import seed
+        seed()
+    except Exception as e:
+        print(f"Seed skipped or failed: {e}")
+
+    yield
+    # Nothing to clean up
+
+
 app = FastAPI(
     title="Meetly API",
     description="Backend for the Meetly video conferencing application",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # ---------------------------------------------------------------------------
-# CORS — allow the Next.js dev server (and any configured origin) to call us
+# CORS
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        FRONTEND_URL,
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ---------------------------------------------------------------------------
-# Create tables on startup (idempotent — safe to call every time)
-# ---------------------------------------------------------------------------
-Base.metadata.create_all(bind=engine)
 
 # ---------------------------------------------------------------------------
 # Routers
